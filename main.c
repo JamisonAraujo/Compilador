@@ -1,4 +1,4 @@
-#include "lexico.h"
+#include "compilador.h"
 
 int main (int argc, char *argv[]){
 

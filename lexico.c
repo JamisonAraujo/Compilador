@@ -182,7 +182,7 @@ void CriaTabela(FILE *saida, int pos, char *fila, int tipoLexema, int col, int r
    
     switch(tipoLexema) {
         case 0: lexema = "KEYWORD"; break;
-        case 1: lexema = "ID"; break;
+        case 1: lexema = "IDENTIFIER"; break;
         case 2: lexema = "NUMBER"; break;
         case 3: lexema = "OPERATOR"; break;
         case 4: lexema = uppercase(fila); break;

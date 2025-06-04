@@ -1,49 +1,54 @@
 #include "compilador.h"
 
-SintaxNode *create_node(const char *type, const char *value){
-    SintaxNode *node = malloc(sizeof(SintaxNode));
+SyntaxNode *create_node(const char *type, const char *value){
+    SyntaxNode *node = malloc(sizeof(SyntaxNode));
     strcpy(node->type, type);
     strcpy(node->value, value);
     node->num_descendant = 0;
     return node;
 }
 
-void add_descendant(SintaxNode *parent, SintaxNode *descendant){
-    if (parent->num_descendant < 10)
-    {
+void add_descendant(SyntaxNode *parent, SyntaxNode *descendant){
+    if (parent->num_descendant < 10) {
         parent->descendants[parent->num_descendant++] = descendant;
     }
 }
 
-void imprimir_arvore(SintaxNode *node, int nivel){
-    for (int i = 0; i < nivel; i++)
-        printf("  ");
+void print_tree(SyntaxNode *node, int level, FILE *tree){
+    
+    for (int i = 0; i < level; i++)
+        fprintf(tree, "  ");
     if (strlen(node->value) > 0)
-        printf("%s: %s\n", node->type, node->value);
+        fprintf(tree, "%s: %s\n", node->type, node->value);
     else
-        printf("%s\n", node->type);
+        fprintf(tree, "%s\n", node->type);
 
-    for (int i = 0; i < node->num_descendant; i++)
-    {
-        imprimir_arvore(node->descendants[i], nivel + 1);
+    for (int i = 0; i < node->num_descendant; i++) {
+        print_tree(node->descendants[i], level + 1, tree);
     }
+
 }
 
-int token_atual_e(const char *lexema, const char *fila, TokenArray *tokens, int pos){
-
-    return pos < tokens->count &&
-           strcmp(tokens->token[pos].lexema, lexema) == 0 && (fila == NULL || strcmp(tokens->token[pos].fila, fila) == 0);
+int current_token(ParserState *state, const char *lexema, const char *fila){
+    if (state->pos >= state->tokens->count) return 0;
+    
+    Token *token = &state->tokens->token[state->pos];
+    
+    printf("%d %d lexema: %s-%s, fila: %s-%s\n", token->row, token->col, lexema, token->lexema, fila, token->fila);
+    return strcmp(token->lexema, lexema) == 0 && (fila == NULL || strcmp(token->fila, fila) == 0);
 }
 
-Token *consumir_token(TokenArray *tokens, int pos){
-    return &tokens->token[pos];
+Token *consume_token(ParserState *state){
+    return &state->tokens->token[state->pos++];
 }
 
-void erro_sintatico(const char *expected, TokenArray *tokens, int pos){
-    if (pos < tokens->count){
-        printf("%d %d ERRO SINTÁTICO: Esperado %s\n", tokens->token[pos].row, tokens->token[pos].col, expected);
-    }
-    else {
+void syntax_error(const char *expected, ParserState *state){
+    Token *token = &state->tokens->token[state->pos];
+
+    if (state->pos < state->tokens->count){
+        printf("%d %d ERRO SINTÁTICO: Esperado %s\n", token->row, token->col, expected);
+    } else {
+        printf("%d\n", state->pos);
         printf("ERRO SINTÁTICO: Esperado %s no final do arquivo\n", expected);
     }
     exit(1);
@@ -51,197 +56,317 @@ void erro_sintatico(const char *expected, TokenArray *tokens, int pos){
 
 // === Funções de parsing ===
 
-SintaxNode *parse_bloco(TokenArray *tokens, int pos);
-SintaxNode *parse_comando(TokenArray *tokens, int pos);
-SintaxNode *parse_expressao(TokenArray *tokens, int pos);
+SyntaxNode *parse_block(ParserState *state);
+SyntaxNode *parse_command(ParserState *state);
+SyntaxNode *parse_expression(ParserState *state);
 
-SintaxNode *parse_if(TokenArray *tokens, int pos){
-    SintaxNode *no = create_node("IF", "");
+SyntaxNode *parse_if(ParserState *state){
+    SyntaxNode *node = create_node("IF", "");
 
-    consumir_token(tokens, pos); // 'if'
+    consume_token(state); // 'if'
 
-    if (!token_atual_e("SEPARATOR", "(", tokens, pos))
-        erro_sintatico("SEPARATOR '('", tokens, pos);
-    consumir_token(tokens, pos);
+    if (!current_token(state, "SEPARATOR", "("))
+        syntax_error("SEPARATOR '('", state);
+    consume_token(state);
 
-    add_descendant(no, parse_expressao(tokens, pos));
 
-    if (!token_atual_e("SEPARATOR", ")", tokens, pos))
-        erro_sintatico("SEPARATOR ')'", tokens, pos);
-    consumir_token(tokens, pos);
+    add_descendant(node, parse_expression(state));
 
-    add_descendant(no, parse_comando(tokens, pos));
+    if (!current_token(state, "SEPARATOR", ")"))
+        syntax_error("SEPARATOR ')'", state);
+    consume_token(state);
 
-    if (token_atual_e("KEYWORD", "else", tokens, pos))
-    {
-        consumir_token(tokens, pos);
-        add_descendant(no, parse_comando(tokens, pos));
+    add_descendant(node, parse_command(state));
+
+    if (current_token(state, "KEYWORD", "else")) {
+        consume_token(state);
+        add_descendant(node, parse_command(state));
     }
 
-    return no;
-}
-
-SintaxNode *parse_while(TokenArray *tokens, int pos){
-    SintaxNode *node = create_node("WHILE", "");
-    consumir_token(tokens, pos); // 'while'
-
-    if (!token_atual_e("SEPARATOR", "(", tokens, pos))
-        erro_sintatico("SEPARATOR '('", tokens, pos);
-    consumir_token(tokens, pos);
-
-    add_descendant(node, parse_expressao(tokens, pos));
-
-    if (!token_atual_e("SEPARATOR", ")", tokens, pos))
-        erro_sintatico("SEPARATOR ')'", tokens, pos);
-    consumir_token(tokens, pos);
-
-    add_descendant(node, parse_comando(tokens, pos));
     return node;
 }
 
-SintaxNode *parse_for(TokenArray *tokens, int pos){
-    SintaxNode *no = create_node("FOR", "");
-    consumir_token(tokens, pos); // 'for'
+SyntaxNode *parse_while(ParserState *state){
+    SyntaxNode *node = create_node("WHILE", "");
+    consume_token(state); // 'while'
 
-    if (!token_atual_e("SEPARATOR", "(", tokens, pos))
-        erro_sintatico("SEPARATOR '('", tokens, pos);
-    consumir_token(tokens, pos);
+    if (!current_token(state, "SEPARATOR", "("))
+        syntax_error("SEPARATOR '('", state);
+    consume_token(state);
 
-    add_descendant(no, parse_expressao(tokens, pos));
-    if (!token_atual_e("SEPARATOR", ";", tokens, pos))
-        erro_sintatico("SEPARATOR ';'", tokens, pos);
-    consumir_token(tokens, pos);
+    add_descendant(node, parse_expression(state));
 
-    add_descendant(no, parse_expressao(tokens, pos));
-    if (!token_atual_e("SEPARATOR", ";", tokens, pos))
-        erro_sintatico("SEPARATOR ';'", tokens, pos);
-    consumir_token(tokens, pos);
+    if (!current_token(state, "SEPARATOR", ")"))
+        syntax_error("SEPARATOR ')'", state);
+    consume_token(state);
 
-    add_descendant(no, parse_expressao(tokens, pos));
-    if (!token_atual_e("SEPARATOR", ")", tokens, pos))
-        erro_sintatico("SEPARATOR ')'", tokens, pos);
-    consumir_token(tokens, pos);
+    add_descendant(node, parse_command(state));
+    return node;
+}
 
-    add_descendant(no, parse_comando(tokens, pos));
+SyntaxNode *parse_for(ParserState *state){
+    SyntaxNode *no = create_node("FOR", "");
+    consume_token(state); // 'for'
+
+    if (!current_token(state, "SEPARATOR", "("))
+        syntax_error("SEPARATOR '('", state);
+    consume_token(state);
+
+    add_descendant(no, parse_expression(state));
+    if (!current_token(state, "SEPARATOR", ";"))
+        syntax_error("SEPARATOR ';'", state);
+    consume_token(state);
+
+    add_descendant(no, parse_expression(state));
+    if (!current_token(state, "SEPARATOR", ";"))
+        syntax_error("SEPARATOR ';'", state);
+    consume_token(state);
+
+    add_descendant(no, parse_expression(state));
+    if (!current_token(state, "SEPARATOR", ")"))
+        syntax_error("SEPARATOR ')'", state);
+    consume_token(state);
+
+    add_descendant(no, parse_command(state));
     return no;
 }
 
-SintaxNode *parse_return(TokenArray *tokens, int pos){
-    SintaxNode *no = create_node("RETURN", "");
-    consumir_token(tokens, pos); // 'return'
+SyntaxNode *parse_return(ParserState *state){
+    SyntaxNode *no = create_node("RETURN", "");
+    consume_token(state); // 'return'
 
-    add_descendant(no, parse_expressao(tokens, pos));
+    add_descendant(no, parse_expression(state));
 
-    if (!token_atual_e("SEPARATOR", ";", tokens, pos))
-        erro_sintatico("SEPARATOR ';'", tokens, pos);
-    consumir_token(tokens, pos);
+    if (!current_token(state, "SEPARATOR", ";"))
+        syntax_error("SEPARATOR ';'", state);
+    consume_token(state);
     return no;
 }
 
-SintaxNode *parse_bloco(TokenArray *tokens, int pos){
-    if (!token_atual_e("SEPARATOR", "{", tokens, pos))
-        erro_sintatico("SEPARATOR '{'", tokens, pos);
-    consumir_token(tokens, pos);
+SyntaxNode *parse_block(ParserState *state){
+    if (!current_token(state, "SEPARATOR", "{"))
+        syntax_error("SEPARATOR '{'", state);
+    consume_token(state);
 
-    SintaxNode *no = create_node("BLOCO", "");
-    while (!token_atual_e("SEPARATOR", "}", tokens, pos))
-    {
-        add_descendant(no, parse_comando(tokens, pos));
+    SyntaxNode *block_node = create_node("BLOCK", "");
+    while (!current_token(state, "SEPARATOR", "}")) {
+        if (current_token(state, "INT", NULL) || 
+            current_token(state, "FLOAT", NULL) || 
+            current_token(state, "CHAR", NULL)) {
+            add_descendant(block_node, parse_declaration(state));
+        } 
+        else if (current_token(state, "IDENTIFIER", NULL)) {
+            add_descendant(block_node, parse_assignment(state));
+        }
+        else if (current_token(state, "KEYWORD", "printf")) {
+            add_descendant(block_node, parse_function_call(state));
+        }
+        else {
+            syntax_error("declaração, atribuição ou chamada de função", state);
+        }
     }
 
-    consumir_token(tokens, pos); // '}'
-    return no;
+    if (!current_token(state, "SEPARATOR", "}"))
+        syntax_error("}", state);
+    consume_token(state);
+    
+    return block_node;
 }
 
-SintaxNode *parse_expressao(TokenArray *tokens, int pos){
-    SintaxNode *no = create_node("EXPR", "");
+SyntaxNode *parse_declaration(ParserState *state) {
+    SyntaxNode *decl_node = create_node("DECLARATION", "");
+    
+    // Tipo da variável
+    Token *type_token = consume_token(state);
+    add_descendant(decl_node, create_node("TYPE", type_token->fila));
+    
+    // Nome da variável
+    if (!current_token(state, "IDENTIFIER", NULL))
+        syntax_error("identificador", state);
+    Token *name_token = consume_token(state);
+    add_descendant(decl_node, create_node("NAME", name_token->fila));
+    
+    // Inicialização opcional
+    if (current_token(state, "OPERATOR", "=")) {
+        consume_token(state); // Consome o '='
+        add_descendant(decl_node, parse_expression(state));
+    }
+    
+    // Ponto e vírgula obrigatório
+    if (!current_token(state, "SEPARATOR", ";"))
+        syntax_error(";", state);
+    consume_token(state);
+    
+    return decl_node;
+}
+
+SyntaxNode *parse_assignment(ParserState *state) {
+    SyntaxNode *assign_node = create_node("ASSIGNMENT", "");
+    
+    // Nome da variável
+    Token *var_token = consume_token(state);
+    add_descendant(assign_node, create_node("VARIABLE", var_token->fila));
+    
+    // Operador de atribuição
+    if (!current_token(state, "OPERATOR", "="))
+        syntax_error("=", state);
+    consume_token(state);
+    add_descendant(assign_node, create_node("OPERATOR", "="));
+    
+    // Expressão
+    add_descendant(assign_node, parse_expression(state));
+    
+    // Ponto e vírgula obrigatório
+    if (!current_token(state, "SEPARATOR", ";"))
+        syntax_error(";", state);
+    consume_token(state);
+    
+    return assign_node;
+}
+
+SyntaxNode *parse_function_call(ParserState *state) {
+    SyntaxNode *func_node = create_node("FUNCTION_CALL", "");
+    
+    // Nome da função
+    Token *func_token = consume_token(state);
+    add_descendant(func_node, create_node("FUNCTION", func_token->fila));
+    
+    // Parêntese de abertura
+    if (!current_token(state, "SEPARATOR", "("))
+        syntax_error("(", state);
+    consume_token(state);
+    
+    // Argumentos
+    SyntaxNode *args_node = create_node("ARGUMENTS", "");
+    add_descendant(func_node, args_node);
+    
+    // Primeiro argumento (literal)
+    if (current_token(state, "LITERAL", NULL)) {
+        Token *arg_token = consume_token(state);
+        add_descendant(args_node, create_node("ARGUMENT", arg_token->fila));
+    } else {
+        syntax_error("string literal", state);
+    }
+    
+    // Vírgula separadora
+    if (!current_token(state, "SEPARATOR", ","))
+        syntax_error(",", state);
+    consume_token(state);
+    
+    // Segundo argumento (variável)
+    if (current_token(state, "IDENTIFIER", NULL)) {
+        Token *arg_token = consume_token(state);
+        add_descendant(args_node, create_node("ARGUMENT", arg_token->fila));
+    } else {
+        syntax_error("identificador", state);
+    }
+    
+    // Parêntese de fechamento
+    if (!current_token(state, "SEPARATOR", ")"))
+        syntax_error(")", state);
+    consume_token(state);
+    
+    // Ponto e vírgula obrigatório
+    if (!current_token(state, "SEPARATOR", ";"))
+        syntax_error(";", state);
+    consume_token(state);
+    
+    return func_node;
+}
+
+
+
+SyntaxNode *parse_expression(ParserState *state){
+    SyntaxNode *no = create_node("EXPRESSION", "");
     int parenteses_abertos = 0;
-    int num_tokens = tokens->count;
-    while (pos < num_tokens) {
-        Token *token = tokens[pos].token;
-        if (token_atual_e("SEPARATOR", "(", tokens, pos))
+    while (state->pos < state->tokens->count) {
+        Token *token = &state->tokens->token[state->pos];
+        if (current_token(state, "SEPARATOR", "("))
             parenteses_abertos++;
 
-        if (token_atual_e("SEPARATOR", ")", tokens, pos))
+        if (current_token(state, "SEPARATOR", ")"))
         {
             if (parenteses_abertos == 0)
                 break;
             parenteses_abertos--;
         }
 
-        if (parenteses_abertos == 0 && token_atual_e("SEPARATOR", ";", tokens, pos))
+        if (parenteses_abertos == 0 && current_token(state, "SEPARATOR", ";"))
             break;
 
         add_descendant(no, create_node(token->lexema, token->fila));
-        consumir_token(tokens, pos);
+        consume_token(state);
     }
 
     return no;
 }
 
-SintaxNode *parse_comando(TokenArray *tokens, int pos){
-    if (token_atual_e("KEYWORD", "if", tokens, pos))
-        return parse_if(tokens, pos);
-    if (token_atual_e("KEYWORD", "while", tokens, pos))
-        return parse_while(tokens, pos);
-    if (token_atual_e("KEYWORD", "for", tokens, pos))
-        return parse_for(tokens, pos);
-    if (token_atual_e("KEYWORD", "return", tokens, pos))
-        return parse_return(tokens, pos);
-    if (token_atual_e("SEPARATOR", "{", tokens, pos))
-        return parse_bloco(tokens, pos);
+SyntaxNode *parse_command(ParserState *state){
+    if (current_token(state, "KEYWORD", "if"))
+        return parse_if(state);
+    if (current_token(state, "KEYWORD", "while"))
+        return parse_while(state);
+    if (current_token(state, "KEYWORD", "for"))
+        return parse_for(state);
+    if (current_token(state, "KEYWORD", "return"))
+        return parse_return(state);
+    if (current_token(state, "SEPARATOR", "{"))
+        return parse_block(state);
 
-    // Expressão simples
-    SintaxNode *no = create_node("COMANDO", "");
-    add_descendant(no, parse_expressao(tokens, pos));
-    if (!token_atual_e("SEPARATOR", ";", tokens, pos))
-        erro_sintatico("SEPARATOR ';'", tokens, pos);
-    consumir_token(tokens, pos);
-    return no;
+    SyntaxNode *node = create_node("COMMAND", "");
+    add_descendant(node, parse_expression(state));
+    if (!current_token(state, "SEPARATOR", ";"))
+        syntax_error("SEPARATOR ';'", state);
+    consume_token(state);
+    return node;
 }
 
-SintaxNode *parse_funcao(TokenArray *tokens, int pos){
-    SintaxNode *node = create_node("FUNCAO", "");
-    Token *token = tokens[pos].token;
-    // Espera: tipo retorno
-    if (!token_atual_e("KEYWORD", NULL, tokens, pos))
-        erro_sintatico("INT", tokens, pos);
-    add_descendant(node, create_node("Tipo", token->fila));
-    consumir_token(tokens, pos);
+SyntaxNode *parse_function(ParserState *state){
+    SyntaxNode *node = create_node("FUNCTION", "");
+    Token *token = &state->tokens->token[state->pos];
+    // return type
+    if (!current_token(state, "INT", NULL) &&
+        !current_token(state, "FLOAT", NULL) &&
+        !current_token(state, "CHAR", NULL) &&
+        !current_token(state, "VOID", NULL)) {
+        syntax_error("type (INT, FLOAT, CHAR, VOID)", state);
+    }
 
-    // Espera: nome
-    if (!token_atual_e("IDENTIFICADOR", NULL, tokens, pos))
-        erro_sintatico("IDENTIFICADOR", tokens, pos);
-    add_descendant(node, create_node("Nome", token->fila));
-    consumir_token(tokens, pos);
+    Token *tipo = consume_token(state);
+    add_descendant(node, create_node("RETURN_TYPE", tipo->fila));
 
-    if (!token_atual_e("SEPARATOR", "(", tokens, pos))
-        erro_sintatico("SEPARATOR '('", tokens, pos);
-    consumir_token(tokens, pos);
+    if (!current_token(state, "IDENTIFIER", NULL) && !current_token(state, "KEYWORD", "main"))
+        syntax_error("identifier", state);
+    
+    Token *name = consume_token(state);
+    add_descendant(node, create_node("NAME", name->fila));
+    if (!current_token(state, "SEPARATOR", "("))
+        syntax_error("(", state);
+    consume_token(state);
 
-    if (!token_atual_e("SEPARATOR", ")", tokens, pos))
-        erro_sintatico("SEPARATOR ')'", tokens, pos);
-    consumir_token(tokens, pos);
-
-    add_descendant(node, parse_bloco(tokens, pos));
+    if (!current_token(state, "SEPARATOR", ")"))
+        syntax_error(")", state);
+    consume_token(state);
+    add_descendant(node, parse_block(state));
     return node;
 }
 
 void analisar_sintatico(TokenArray *tokens){
-    int pos = 0;
-    SintaxNode *raiz = create_node("Programa", "");
+    ParserState state;
+    state.tokens = tokens;
+    state.pos = 0;    
+    FILE *tree = fopen("tree.txt", "w");
+    SyntaxNode *root = create_node("Program", "");
 
-     // Ignora diretivas no início
-    while (pos < tokens->count && token_atual_e("DIRECTIVE", NULL, tokens, pos)) {
-        add_descendant(raiz, create_node("DIRECTIVE", tokens->token[pos].fila));
-        pos++;
+    while (current_token(&state, "DIRECTIVE", NULL)) {
+        add_descendant(root, create_node("DIRECTIVE", state.tokens->token[state.pos].fila));
+        state.pos++;
     }
     
-    // Parse das funções
-    while (pos < tokens->count) {
-        SintaxNode *funcao = parse_funcao(tokens, pos);
-        add_descendant(raiz, funcao);
+    while (state.pos < tokens->count) {
+        add_descendant(root, parse_function(&state));
     }
 
-    imprimir_arvore(raiz, 0);
+    print_tree(root, 0, tree);
+    fclose (tree);
 }

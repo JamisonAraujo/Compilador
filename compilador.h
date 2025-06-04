@@ -22,14 +22,19 @@ typedef struct {
     int capacity;    // Capacidade total do array
 } TokenArray;
 
-typedef struct SintaxNode {
+typedef struct SyntaxNode {
     char type[50];
     char value[100];
-    struct SintaxNode *descendants[10];
+    struct SyntaxNode *descendants[10];
     int num_descendant;
-} SintaxNode;
+} SyntaxNode;
 
-void analisar_sintatico(TokenArray *tokens);
+typedef struct {
+    TokenArray *tokens;
+    int pos;
+} ParserState;
+
+//lexico.c
 
 void analisador_lexico(FILE *codigo, TokenArray *tokens);
 int DefineLexema(char *fila, int tipo);
@@ -44,4 +49,11 @@ void init_token_array(TokenArray *arr, int initial_capacity);
 void add_token(TokenArray *arr, Token token);
 void free_token_array(TokenArray *arr);
 
+//sintatico.c
+
+void analisar_sintatico(TokenArray *tokens);
+SyntaxNode *parse_declaration(ParserState *state);
+SyntaxNode *parse_assignment(ParserState *state);
+SyntaxNode *parse_function_call(ParserState *state);
+SyntaxNode *parse_expression(ParserState *state);
 #endif
