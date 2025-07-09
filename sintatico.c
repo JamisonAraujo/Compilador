@@ -1,4 +1,5 @@
 #include "compilador.h"
+#include "gerador.h"
 
 SyntaxNode *create_node(const char *type, const char *value){
     SyntaxNode *node = malloc(sizeof(SyntaxNode));
@@ -12,6 +13,16 @@ void add_descendant(SyntaxNode *parent, SyntaxNode *descendant){
     if (parent->num_descendant < 10) {
         parent->descendants[parent->num_descendant++] = descendant;
     }
+}
+
+void add_predefined_functions(SymbolTable *table) {
+    insert_symbol(table, "printf", FUNCAO, "int", 0);
+    insert_symbol(table, "scanf", FUNCAO, "int", 0);
+}
+
+Token* current_token_obj(ParserState *state) {
+    if (state->pos >= state->tokens->count) return NULL;
+    return &state->tokens->token[state->pos];
 }
 
 void print_tree(SyntaxNode *node, int level, FILE *tree){
@@ -34,7 +45,6 @@ int current_token(ParserState *state, const char *lexema, const char *fila){
     
     Token *token = &state->tokens->token[state->pos];
     
-    printf("%d %d lexema: %s-%s, fila: %s-%s\n", token->row, token->col, lexema, token->lexema, fila, token->fila);
     return strcmp(token->lexema, lexema) == 0 && (fila == NULL || strcmp(token->fila, fila) == 0);
 }
 
@@ -54,7 +64,7 @@ void syntax_error(const char *expected, ParserState *state){
     exit(1);
 }
 
-// === Funções de parsing ===
+//  Funções de parsing
 
 SyntaxNode *parse_block(ParserState *state);
 SyntaxNode *parse_command(ParserState *state);
@@ -137,6 +147,12 @@ SyntaxNode *parse_return(ParserState *state){
 
     add_descendant(no, parse_expression(state));
 
+    // Verificação semântica
+    if (state->symbol_table && state->current_function_type) {
+        check_return_type(state->symbol_table, no->descendants[0], 
+                         state->current_function_type, current_token_obj(state)->row);
+    }
+
     if (!current_token(state, "SEPARATOR", ";"))
         syntax_error("SEPARATOR ';'", state);
     consume_token(state);
@@ -147,7 +163,6 @@ SyntaxNode *parse_block(ParserState *state){
     if (!current_token(state, "SEPARATOR", "{"))
         syntax_error("SEPARATOR '{'", state);
     consume_token(state);
-
     SyntaxNode *block_node = create_node("BLOCK", "");
     while (!current_token(state, "SEPARATOR", "}")) {
         if (current_token(state, "INT", NULL) || 
@@ -158,7 +173,8 @@ SyntaxNode *parse_block(ParserState *state){
         else if (current_token(state, "IDENTIFIER", NULL)) {
             add_descendant(block_node, parse_assignment(state));
         }
-        else if (current_token(state, "KEYWORD", "printf")) {
+        else if (current_token(state, "KEYWORD", "printf") || current_token(state, "KEYWORD", "scanf")) {
+            
             add_descendant(block_node, parse_function_call(state));
         }
         else {
@@ -176,23 +192,24 @@ SyntaxNode *parse_block(ParserState *state){
 SyntaxNode *parse_declaration(ParserState *state) {
     SyntaxNode *decl_node = create_node("DECLARATION", "");
     
-    // Tipo da variável
     Token *type_token = consume_token(state);
     add_descendant(decl_node, create_node("TYPE", type_token->fila));
     
-    // Nome da variável
     if (!current_token(state, "IDENTIFIER", NULL))
         syntax_error("identificador", state);
     Token *name_token = consume_token(state);
     add_descendant(decl_node, create_node("NAME", name_token->fila));
-    
-    // Inicialização opcional
+        
+    // Verificação semântica
+    if (state->symbol_table) {
+        insert_symbol(state->symbol_table, name_token->fila, VARIAVEL, type_token->fila, name_token->row);
+    }
+
     if (current_token(state, "OPERATOR", "=")) {
-        consume_token(state); // Consome o '='
+        consume_token(state); 
         add_descendant(decl_node, parse_expression(state));
     }
     
-    // Ponto e vírgula obrigatório
     if (!current_token(state, "SEPARATOR", ";"))
         syntax_error(";", state);
     consume_token(state);
@@ -203,70 +220,68 @@ SyntaxNode *parse_declaration(ParserState *state) {
 SyntaxNode *parse_assignment(ParserState *state) {
     SyntaxNode *assign_node = create_node("ASSIGNMENT", "");
     
-    // Nome da variável
     Token *var_token = consume_token(state);
     add_descendant(assign_node, create_node("VARIABLE", var_token->fila));
     
-    // Operador de atribuição
+    // Verificação semântica
+    if (state->symbol_table) {
+        check_variable_usage(state->symbol_table, var_token);
+    }
+
     if (!current_token(state, "OPERATOR", "="))
         syntax_error("=", state);
     consume_token(state);
+
     add_descendant(assign_node, create_node("OPERATOR", "="));
     
-    // Expressão
-    add_descendant(assign_node, parse_expression(state));
+    SyntaxNode *expr_node = parse_expression(state); 
+    add_descendant(assign_node, expr_node); 
+
+    if (state->symbol_table) {
+        check_assignment(state->symbol_table, var_token, expr_node, var_token->row);
+    }
     
-    // Ponto e vírgula obrigatório
     if (!current_token(state, "SEPARATOR", ";"))
         syntax_error(";", state);
     consume_token(state);
-    
+
     return assign_node;
 }
 
 SyntaxNode *parse_function_call(ParserState *state) {
     SyntaxNode *func_node = create_node("FUNCTION_CALL", "");
     
-    // Nome da função
     Token *func_token = consume_token(state);
     add_descendant(func_node, create_node("FUNCTION", func_token->fila));
-    
-    // Parêntese de abertura
+
+    // Verificação semântica
+    if (state->symbol_table) {
+        check_function_call(state->symbol_table, func_token, func_token->row);
+    }
     if (!current_token(state, "SEPARATOR", "("))
         syntax_error("(", state);
     consume_token(state);
     
-    // Argumentos
     SyntaxNode *args_node = create_node("ARGUMENTS", "");
     add_descendant(func_node, args_node);
     
-    // Primeiro argumento (literal)
-    if (current_token(state, "LITERAL", NULL)) {
-        Token *arg_token = consume_token(state);
-        add_descendant(args_node, create_node("ARGUMENT", arg_token->fila));
-    } else {
-        syntax_error("string literal", state);
+    while (!current_token(state, "SEPARATOR", ")")) {
+        if (current_token(state, "LITERAL", NULL) || current_token(state, "IDENTIFIER", NULL)) {
+            Token *arg_token = consume_token(state);
+            add_descendant(args_node, create_node("ARGUMENT", arg_token->fila));
+        }
+        
+        if (current_token(state, "SEPARATOR", ",")) {
+            consume_token(state);
+        } else if (!current_token(state, "SEPARATOR", ")")) {
+            syntax_error(", or )", state);
+        }
     }
-    
-    // Vírgula separadora
-    if (!current_token(state, "SEPARATOR", ","))
-        syntax_error(",", state);
-    consume_token(state);
-    
-    // Segundo argumento (variável)
-    if (current_token(state, "IDENTIFIER", NULL)) {
-        Token *arg_token = consume_token(state);
-        add_descendant(args_node, create_node("ARGUMENT", arg_token->fila));
-    } else {
-        syntax_error("identificador", state);
-    }
-    
-    // Parêntese de fechamento
+
     if (!current_token(state, "SEPARATOR", ")"))
         syntax_error(")", state);
     consume_token(state);
     
-    // Ponto e vírgula obrigatório
     if (!current_token(state, "SEPARATOR", ";"))
         syntax_error(";", state);
     consume_token(state);
@@ -324,7 +339,7 @@ SyntaxNode *parse_command(ParserState *state){
 SyntaxNode *parse_function(ParserState *state){
     SyntaxNode *node = create_node("FUNCTION", "");
     Token *token = &state->tokens->token[state->pos];
-    // return type
+
     if (!current_token(state, "INT", NULL) &&
         !current_token(state, "FLOAT", NULL) &&
         !current_token(state, "CHAR", NULL) &&
@@ -340,22 +355,43 @@ SyntaxNode *parse_function(ParserState *state){
     
     Token *name = consume_token(state);
     add_descendant(node, create_node("NAME", name->fila));
-    if (!current_token(state, "SEPARATOR", "("))
-        syntax_error("(", state);
-    consume_token(state);
+    // Verificação semântica
+    if (state->symbol_table) {
+        int current_scope = state->symbol_table->scope_level;
+        state->symbol_table->scope_level = 0;
 
-    if (!current_token(state, "SEPARATOR", ")"))
-        syntax_error(")", state);
+        check_function_declaration(state->symbol_table, tipo, name);
+
+        state->symbol_table->scope_level = current_scope;
+        state->current_function_type = tipo->fila; 
+    }
+    
+    if (!current_token(state, "SEPARATOR", "("))
+    syntax_error("(", state);
     consume_token(state);
+    
+    if (!current_token(state, "SEPARATOR", ")"))
+    syntax_error(")", state);
+    consume_token(state);
+    enter_scope(state->symbol_table); 
     add_descendant(node, parse_block(state));
+
+    if (state->symbol_table) {
+        state->current_function_type = NULL;
+    }
+
     return node;
 }
 
-void analisar_sintatico(TokenArray *tokens){
+void analisador_sintatico(TokenArray *tokens){
     ParserState state;
     state.tokens = tokens;
     state.pos = 0;    
-    FILE *tree = fopen("tree.txt", "w");
+    state.symbol_table = create_symbol_table();
+    state.current_function_type = NULL;
+    add_predefined_functions(state.symbol_table);
+
+    FILE *tree = fopen("arvore.txt", "w");
     SyntaxNode *root = create_node("Program", "");
 
     while (current_token(&state, "DIRECTIVE", NULL)) {
@@ -367,6 +403,19 @@ void analisar_sintatico(TokenArray *tokens){
         add_descendant(root, parse_function(&state));
     }
 
+    check_undeclared_symbols(state.symbol_table);
+    
+    // Tabela de símbolos
+    FILE *sym_table_file = fopen("tabela_de_simbolos.txt", "w");
+    print_symbol_table(state.symbol_table, sym_table_file);
+
+    fclose(sym_table_file);
+
     print_tree(root, 0, tree);
     fclose (tree);
+    FILE *output = fopen("codigo_final.txt", "w");
+    generate_code(root, state.symbol_table, output);
+    fclose(output);
+    free_symbol_table(state.symbol_table);
+
 }

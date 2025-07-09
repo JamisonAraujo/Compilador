@@ -1,4 +1,5 @@
 #ifndef COMPILADOR_H
+#define COMPILADOR_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,9 +18,9 @@ typedef struct Token {
 } Token;
 
 typedef struct {
-    Token *token;     // Array de tokens
-    int count;       // Número de tokens usados
-    int capacity;    // Capacidade total do array
+    Token *token;     
+    int count;       
+    int capacity;    
 } TokenArray;
 
 typedef struct SyntaxNode {
@@ -29,10 +30,34 @@ typedef struct SyntaxNode {
     int num_descendant;
 } SyntaxNode;
 
+typedef enum {
+    VARIAVEL,
+    FUNCAO,
+    TIPO
+} SymbolType;
+
+typedef struct Symbol {
+    char *name;
+    SymbolType type;
+    char *data_type;    
+    int scope_level;     
+    int declared;        // 1 = declarado, 0 = não declarado
+    int first_occurrence_line; 
+    struct Symbol *next; 
+} Symbol;
+
+typedef struct SymbolTable {
+    Symbol *head;
+    int scope_level;
+} SymbolTable;
+
 typedef struct {
     TokenArray *tokens;
     int pos;
+    SymbolTable *symbol_table;
+    const char *current_function_type; 
 } ParserState;
+
 
 //lexico.c
 
@@ -51,9 +76,31 @@ void free_token_array(TokenArray *arr);
 
 //sintatico.c
 
-void analisar_sintatico(TokenArray *tokens);
+void analisador_sintatico(TokenArray *tokens);
+SyntaxNode *create_node(const char *type, const char *value);
+void add_descendant(SyntaxNode *parent, SyntaxNode *descendant);
 SyntaxNode *parse_declaration(ParserState *state);
 SyntaxNode *parse_assignment(ParserState *state);
 SyntaxNode *parse_function_call(ParserState *state);
 SyntaxNode *parse_expression(ParserState *state);
+
+//semantico.c
+void check_variable_declaration(SymbolTable *table, Token *type_token, Token *name_token);
+void check_function_declaration(SymbolTable *table, Token *type_token, Token *name_token);
+void check_variable_usage(SymbolTable *table, Token *var_token);
+void check_assignment(SymbolTable *table, Token *var_token, SyntaxNode *expr_node, int line);
+void check_function_call(SymbolTable *table, Token *func_token, int line);
+void check_return_type(SymbolTable *table, SyntaxNode *return_node, const char *expected_type, int line);
+char* infer_expr_type(SymbolTable *table, SyntaxNode *node);
+
+//simbolo.c
+SymbolTable* create_symbol_table();
+void enter_scope(SymbolTable *table);
+void exit_scope(SymbolTable *table);
+Symbol* find_symbol(SymbolTable *table, const char *name);
+Symbol* insert_symbol(SymbolTable *table, const char *name, SymbolType type, const char *data_type, int line);
+void print_symbol_table(SymbolTable *table, FILE *out);
+void check_undeclared_symbols(SymbolTable *table);
+void free_symbol_table(SymbolTable *table);
+
 #endif

@@ -2,7 +2,7 @@
 
 const char *palavras_chave[] = {
     "if", "else", "do", "while", "for", "return", "struct",
-    "break", "continue", "switch", "case", "printf","default", "main"
+    "break", "continue", "switch", "case", "printf", "scanf","default"
 };
 const char *types[] = {
     "int", "float", "char", "void"
@@ -192,7 +192,6 @@ void CriaTabela(FILE *saida, int pos, char *fila, int tipoLexema, int col, int r
         default: lexema = "ERROR"; break;
     }
     Token new_token;
-    // Preencher new_token com os dados
     
     new_token.id = pos+1;
     new_token.fila = strdup(fila);
@@ -288,7 +287,6 @@ void init_token_array(TokenArray *arr, int initial_capacity) {
 
 void add_token(TokenArray *arr, Token token) {
     if (arr->count >= arr->capacity) {
-        // Dobra a capacidade quando necessário
         arr->capacity *= 2;
         Token *temp = realloc(arr->token, arr->capacity * sizeof(Token));
         if (!temp) {

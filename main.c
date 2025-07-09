@@ -17,12 +17,8 @@ int main (int argc, char *argv[]){
 
     fclose(codigo);
 
-    analisar_sintatico(&tokens);
-    // Liberar memória
-    free_token_array(&tokens);
-
+    analisador_sintatico(&tokens);
     
-    // Liberar memória
     free_token_array(&tokens);
 
     return 0;
